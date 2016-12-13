@@ -28,6 +28,10 @@ Protocols to specify the number and type of contents.
 	func numberOfItemsInPickerView(pickerView: AKPickerView) -> Int
 	optional func pickerView(pickerView: AKPickerView, titleForItem item: Int) -> String
 	optional func pickerView(pickerView: AKPickerView, imageForItem item: Int) -> UIImage
+
+    // View-centric interface
+    optional func pickerView(pickerView: AKPickerView, viewForItem item: Int) -> UIView
+    optional func pickerView(pickerView: AKPickerView, cellForItem: AKCollectionViewCell, constraintsForItem item: Int) -> [NSLayoutConstraint]
 }
 
 // MARK: AKPickerViewDelegate
@@ -39,6 +43,11 @@ and customize the appearance of labels.
 	optional func pickerView(pickerView: AKPickerView, didSelectItem item: Int)
 	optional func pickerView(pickerView: AKPickerView, marginForItem item: Int) -> CGSize
 	optional func pickerView(pickerView: AKPickerView, configureLabel label: UILabel, forItem item: Int)
+    optional func pickerView(pickerView: AKPickerView, configureView view: UIView, forItem item: Int)
+
+    // Width and height methods for view-centric interface.
+    optional func pickerView(pickerView: AKPickerView, contentHeightForItem item: Int) -> CGFloat
+    optional func pickerView(pickerView: AKPickerView, contentWidthForItem item: Int) -> CGFloat
 }
 
 // MARK: - Private Classes and Protocols
@@ -52,9 +61,9 @@ private protocol AKCollectionViewLayoutDelegate {
 
 // MARK: AKCollectionViewCell
 /**
-Private. A subclass of UICollectionViewCell used in AKPickerView's collection view.
+A subclass of UICollectionViewCell used in AKPickerView's collection view.
 */
-private class AKCollectionViewCell: UICollectionViewCell {
+public class AKCollectionViewCell: UICollectionViewCell {
 	var label: UILabel!
 	var imageView: UIImageView!
 	var font = UIFont.systemFontOfSize(UIFont.systemFontSize())
@@ -102,7 +111,7 @@ private class AKCollectionViewCell: UICollectionViewCell {
 		self.initialize()
 	}
 
-	required init!(coder aDecoder: NSCoder) {
+	required public init!(coder aDecoder: NSCoder) {
 		super.init(coder: aDecoder)
 		self.initialize()
 	}
@@ -361,7 +370,13 @@ public class AKPickerView: UIView, UICollectionViewDataSource, UICollectionViewD
 	}
 
 	public override func intrinsicContentSize() -> CGSize {
-		return CGSizeMake(UIViewNoIntrinsicMetric, max(self.font.lineHeight, self.highlightedFont.lineHeight))
+        var height = max(self.font.lineHeight, self.highlightedFont.lineHeight)
+        if let delegate = self.delegate, numberOfItems = self.dataSource?.numberOfItemsInPickerView(self) {
+            for i in 0 ..< numberOfItems {
+                height = max(height, delegate.pickerView?(self, contentHeightForItem: i) ?? 0.0)
+            }
+        }
+		return CGSizeMake(UIViewNoIntrinsicMetric, height)
 	}
 
 	// MARK: Calculation Functions
@@ -517,7 +532,20 @@ public class AKPickerView: UIView, UICollectionViewDataSource, UICollectionViewD
 
 	public func collectionView(collectionView: UICollectionView, cellForItemAtIndexPath indexPath: NSIndexPath) -> UICollectionViewCell {
 		let cell = collectionView.dequeueReusableCellWithReuseIdentifier(NSStringFromClass(AKCollectionViewCell.self), forIndexPath: indexPath) as! AKCollectionViewCell
-		if let title = self.dataSource?.pickerView?(self, titleForItem: indexPath.item) {
+        if let view = self.dataSource?.pickerView?(self, viewForItem: indexPath.item) {
+            for sv in cell.contentView.subviews { sv.removeFromSuperview() }
+            if let constraints = self.dataSource?.pickerView?(self, cellForItem: cell, constraintsForItem: indexPath.item) {
+                view.translatesAutoresizingMaskIntoConstraints = false
+                cell.contentView.addSubview(view)
+                cell.contentView.addConstraints(constraints)
+            } else {
+                cell.contentView.addSubview(view)
+            }
+            if let delegate = self.delegate {
+                delegate.pickerView?(self, configureView: view, forItem: indexPath.item)
+            }
+        }
+		else if let title = self.dataSource?.pickerView?(self, titleForItem: indexPath.item) {
 			cell.label.text = title
 			cell.label.textColor = self.textColor
 			cell.label.highlightedTextColor = self.highlightedTextColor
@@ -541,12 +569,18 @@ public class AKPickerView: UIView, UICollectionViewDataSource, UICollectionViewD
 	// MARK: UICollectionViewDelegateFlowLayout
 	public func collectionView(collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAtIndexPath indexPath: NSIndexPath) -> CGSize {
 		var size = CGSizeMake(self.interitemSpacing, collectionView.bounds.size.height)
-		if let title = self.dataSource?.pickerView?(self, titleForItem: indexPath.item) {
+        if let delegate = delegate, _ = self.dataSource?.pickerView?(self, viewForItem: indexPath.item),
+                width = delegate.pickerView?(self, contentWidthForItem: indexPath.item)
+        {
+            size.width += width
+        }
+        else if let title = self.dataSource?.pickerView?(self, titleForItem: indexPath.item) {
 			size.width += self.sizeForString(title).width
 			if let margin = self.delegate?.pickerView?(self, marginForItem: indexPath.item) {
 				size.width += margin.width * 2
 			}
-		} else if let image = self.dataSource?.pickerView?(self, imageForItem: indexPath.item) {
+		}
+        else if let image = self.dataSource?.pickerView?(self, imageForItem: indexPath.item) {
 			size.width += image.size.width
 		}
 		return size
